@@ -220,9 +220,11 @@ void main() {
     acc += limitLen(desired - v, uMaxForce) * uAnchorW;
   }
 
-  // Palette lock: steer toward the nearest point on the palette's gradient (a polyline in color space).
+  // Palette lock: the palette's gradient (a polyline in color space) acts like a rail.
+  // Colors are pulled onto it and lose sideways drift, but keep gliding along it.
   if (uPalLock > 0.0 && uPalCount > 1) {
-    vec3 best = vec3(0.0);
+    vec3 toRail = vec3(0.0);
+    vec3 tangent = vec3(0.0);
     float bestD = 1e9;
     for (int i = 0; i < 7; i++) {
       if (i >= uPalCount - 1) break;
@@ -232,9 +234,10 @@ void main() {
       vec3 dq = a + ab * t - c;
       dq -= floor(dq + 0.5) * wrapMask;
       float d2 = dot(dq, dq);
-      if (d2 < bestD) { bestD = d2; best = dq; }
+      if (d2 < bestD) { bestD = d2; toRail = dq; tangent = safeNorm(ab); }
     }
-    vec3 desired = safeNorm(best) * uMaxSpeed * min(1.0, sqrt(bestD) / 0.05);
+    vec3 along = dot(v, tangent) * tangent;
+    vec3 desired = along + safeNorm(toRail) * uMaxSpeed * min(1.0, sqrt(bestD) / 0.05);
     acc += limitLen(desired - v, uMaxForce) * uPalLock;
   }
 
