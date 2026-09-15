@@ -94,7 +94,8 @@ function PresetsTab({ presets, activePresetId, onPreset, onSurprise }: Props) {
   );
 }
 
-function FlockTab({ params, onParams }: Props) {
+function FlockTab({ params, onParams, seed }: Props) {
+  const hasPalette = seed.kind === 'palette' || seed.kind === 'gradient';
   return (
     <>
       <Section title="Forces">
@@ -102,6 +103,7 @@ function FlockTab({ params, onParams }: Props) {
         <Slider label="Alignment" hint="Match neighbors' direction of color change — creates waves" value={params.alignment} min={0} max={4} step={0.05} onChange={(v) => onParams({ alignment: v })} />
         <Slider label="Cohesion" hint="Move toward neighbors' average color — blends and blurs" value={params.cohesion} min={0} max={4} step={0.05} onChange={(v) => onParams({ cohesion: v })} />
         <Slider label="Anchor" hint="Pull back toward each cell's starting color" value={params.anchor} min={0} max={5} step={0.05} onChange={(v) => onParams({ anchor: v })} />
+        <Slider label="Palette lock" hint={hasPalette ? 'Keep colors within the chosen palette while patterns keep flowing' : 'Start from a Palette or Flow to use this'} value={params.paletteLock} min={0} max={4} step={0.05} disabled={!hasPalette} onChange={(v) => onParams({ paletteLock: v })} />
         <Slider label="Noise" hint="Random nudges that keep things from settling" value={params.noise} min={0} max={4} step={0.05} onChange={(v) => onParams({ noise: v })} />
       </Section>
       <Section title="Motion">

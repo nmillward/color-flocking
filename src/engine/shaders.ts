@@ -1,12 +1,13 @@
 // GLSL shaders. Every simulation texel is one grid cell.
 // Color spaces (uSpace): 0 = RGB, 1 = OKLab, 2 = HSV. All are stored normalized to [0, 1]^3.
+import { AB_RANGE } from './params';
 
 const COMMON = /* glsl */ `
 precision highp float;
 precision highp int;
 precision highp sampler2D;
 
-const float AB_RANGE = 0.22; // OKLab a/b channels span [-AB_RANGE, AB_RANGE]
+const float AB_RANGE = ${AB_RANGE.toFixed(4)};
 
 vec3 srgbToLinear(vec3 c) {
   c = clamp(c, 0.0, 1.0);
@@ -139,6 +140,9 @@ uniform float uTol;
 uniform int uSpace;
 uniform int uWall;      // 0 bounce, 1 wrap, 2 clamp
 uniform uint uFrame;
+uniform vec3 uPal[8];   // palette, already encoded in the active color space
+uniform int uPalCount;
+uniform float uPalLock;
 
 layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oVel;
@@ -214,6 +218,24 @@ void main() {
     float dist = length(d);
     vec3 desired = safeNorm(d) * uMaxSpeed * min(1.0, dist / 0.06);
     acc += limitLen(desired - v, uMaxForce) * uAnchorW;
+  }
+
+  // Palette lock: steer toward the nearest point on the palette's gradient (a polyline in color space).
+  if (uPalLock > 0.0 && uPalCount > 1) {
+    vec3 best = vec3(0.0);
+    float bestD = 1e9;
+    for (int i = 0; i < 7; i++) {
+      if (i >= uPalCount - 1) break;
+      vec3 a = uPal[i];
+      vec3 ab = uPal[i + 1] - a;
+      float t = clamp(dot(c - a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
+      vec3 dq = a + ab * t - c;
+      dq -= floor(dq + 0.5) * wrapMask;
+      float d2 = dot(dq, dq);
+      if (d2 < bestD) { bestD = d2; best = dq; }
+    }
+    vec3 desired = safeNorm(best) * uMaxSpeed * min(1.0, sqrt(bestD) / 0.05);
+    acc += limitLen(desired - v, uMaxForce) * uPalLock;
   }
 
   if (uNoise > 0.0) {

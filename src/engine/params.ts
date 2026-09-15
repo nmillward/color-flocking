@@ -10,6 +10,8 @@ export interface FlockParams {
   cohesion: number;
   /** Pull back toward each cell's starting color. */
   anchor: number;
+  /** Keep colors near the chosen palette's gradient (palette and flow starts only). */
+  paletteLock: number;
   /** Random kicks, as a multiple of max force. */
   noise: number;
 
@@ -45,6 +47,7 @@ export const DEFAULT_PARAMS: FlockParams = {
   alignment: 1.5,
   cohesion: 2.0,
   anchor: 0,
+  paletteLock: 0,
   noise: 0,
   maxSpeed: 2,
   maxForce: 0.02,
@@ -81,4 +84,34 @@ export const PALETTES: Palette[] = [
 export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.replace('#', ''), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/** OKLab a/b channels span [-AB_RANGE, AB_RANGE]. Shared with the shaders. */
+export const AB_RANGE = 0.22;
+
+/** CPU mirror of the shader's encodeSpace(): sRGB → normalized coordinates in `space`. */
+export function srgbToSpace([r, g, b]: [number, number, number], space: ColorSpace): [number, number, number] {
+  if (space === 'oklab') {
+    const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+    const [lr, lg, lb] = [lin(r), lin(g), lin(b)];
+    const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+    const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+    const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+    const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+    const A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    const B = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+    return [L, A / (2 * AB_RANGE) + 0.5, B / (2 * AB_RANGE) + 0.5];
+  }
+  if (space === 'hsv') {
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    let h = 0;
+    if (d > 0) {
+      if (max === r) h = ((g - b) / d + 6) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+    }
+    return [h / 6, max > 0 ? d / max : 0, max];
+  }
+  return [r, g, b];
 }

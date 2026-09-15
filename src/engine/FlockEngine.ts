@@ -1,6 +1,6 @@
 import { Program, createTarget, deleteTarget, detectFloatFormat, type FloatFormat, type Target } from './gl';
 import { CONVERT_FRAG, INIT_FRAG, RENDER_FRAG, RESAMPLE_FRAG, SEED_FRAG, SIM_FRAG, VERT } from './shaders';
-import { DEFAULT_PARAMS, PALETTES, hexToRgb, type ColorSpace, type FlockParams } from './params';
+import { DEFAULT_PARAMS, PALETTES, hexToRgb, srgbToSpace, type ColorSpace, type FlockParams } from './params';
 
 export type SeedKind = 'random' | 'grayscale' | 'palette' | 'gradient' | 'image';
 export type SeedImage = HTMLImageElement | HTMLCanvasElement;
@@ -59,6 +59,8 @@ export class FlockEngine {
   private params: FlockParams;
   private seedSpec: SeedSpec = { kind: 'random' };
   private seedValue = randomSeed();
+  private paletteEnc = new Float32Array(24);
+  private paletteCount = 0;
 
   private cols = 0;
   private rows = 0;
@@ -94,6 +96,7 @@ export class FlockEngine {
     this.canvas = canvas;
     this.params = { ...DEFAULT_PARAMS, ...params };
     if (seed) this.seedSpec = seed;
+    this.updatePalette();
 
     const gl = canvas.getContext('webgl2', {
       alpha: false,
@@ -127,8 +130,9 @@ export class FlockEngine {
   setParams(next: Partial<FlockParams>) {
     const prev = this.params;
     this.params = { ...prev, ...next };
-    if (this.pairs.length && next.colorSpace && next.colorSpace !== prev.colorSpace) {
-      this.convertSpace(prev.colorSpace, next.colorSpace);
+    if (next.colorSpace && next.colorSpace !== prev.colorSpace) {
+      this.updatePalette();
+      if (this.pairs.length) this.convertSpace(prev.colorSpace, next.colorSpace);
     }
     if (next.cellSize !== undefined && next.cellSize !== prev.cellSize) this.resize();
     this.requestDraw();
@@ -137,6 +141,7 @@ export class FlockEngine {
   /** Change what the grid starts from. With `transition`, the flock flows toward the new source. */
   setSeed(spec: SeedSpec, opts: { transition?: boolean } = {}) {
     this.seedSpec = spec;
+    this.updatePalette();
     if (spec.kind === 'image' && spec.image) this.uploadImage(spec.image);
     this.seedValue = randomSeed();
     if (!this.pairs.length) return;
@@ -457,6 +462,16 @@ export class FlockEngine {
     this.anchor = anchor;
   }
 
+  /** Encode the palette into the active color space for the palette-lock force. */
+  private updatePalette() {
+    const { kind, palette } = this.seedSpec;
+    const colors =
+      kind === 'palette' || kind === 'gradient' ? (palette?.length ? palette : PALETTES[0].colors).slice(0, 8) : [];
+    this.paletteEnc.fill(0);
+    colors.forEach((hex, i) => this.paletteEnc.set(srgbToSpace(hexToRgb(hex), this.params.colorSpace), i * 3));
+    this.paletteCount = colors.length;
+  }
+
   private anchorWeight(now: number) {
     const b = this.boost;
     let w = this.params.anchor;
@@ -499,6 +514,9 @@ export class FlockEngine {
       s.int('uSpace', SPACE[p.colorSpace]);
       s.int('uWall', WALL[p.walls]);
       s.uint('uFrame', this.frame);
+      s.vec3v('uPal', this.paletteEnc);
+      s.int('uPalCount', this.paletteCount);
+      s.float('uPalLock', p.paletteLock);
     });
 
     this.readIdx = 1 - this.readIdx;

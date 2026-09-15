@@ -20,6 +20,7 @@ export function surprise(): { params: FlockParams; seed: SeedSelection } {
     alignment: round(rand(0.8, 2.8), 0.1),
     cohesion: round(rand(0.8, 3), 0.1),
     anchor: kind === 'image' ? round(rand(0.3, 2.5), 0.1) : 0,
+    paletteLock: kind === 'palette' || kind === 'gradient' ? round(rand(0.4, 2), 0.1) : 0,
     noise: Math.random() < 0.5 ? 0 : round(rand(0.2, 1.5), 0.1),
     maxSpeed: round(rand(1, 6), 0.25),
     maxForce: round(rand(0.01, 0.12), 0.005),
