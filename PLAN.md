@@ -145,3 +145,19 @@ colorFlocking/
 ├─ .github/workflows/deploy.yml
 └─ PLAN.md
 ```
+
+---
+
+## 6. Built so far (Phase 1)
+
+Live: https://nmillward.github.io/color-flocking/
+
+**Two forces that weren't in the original, both needed to make it look good:**
+- **Palette lock.** Without it, any palette turned to rainbow noise within ~25s. The palette's gradient acts as a *rail*: colors are pulled onto it and lose sideways drift, but keep gliding along it. Steering toward the rail with the usual "desired − velocity" froze everything, so the force preserves motion along the rail and cancels only motion away from it.
+- **Anchor** is a plain spring toward each cell's starting color (no velocity term). Steering with a velocity term braked the flock to a standstill, which is why photos froze instead of breathing.
+
+**Also built:** OKLab gamut mapping (out-of-gamut colors keep hue/lightness, lose chroma); hex grids with true 6-neighbor flocking; cell shapes (square/circle/diamond/hexagon), stretch, gap, roundness; 14 Unsplash film photos with per-photo palette extraction (k-means in OKLab) so a dissolving photo keeps its own colors; 10 presets; PNG export; hover-reveal controls.
+
+**Tuning method:** `window.tuning.board([...], steps)` in dev renders a labeled contact sheet and scores motion (mean color change per 60 steps). Smoothness = change over 60 steps ÷ (6 × change over 10 steps); ~0.9+ means flowing, ~0.5 means jitter.
+
+**Still open:** presets were tuned from still frames and motion scores, not from watching them play.

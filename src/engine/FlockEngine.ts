@@ -31,7 +31,9 @@ const SPACE: Record<ColorSpace, number> = { rgb: 0, oklab: 1, hsv: 2 };
 const WALL = { bounce: 0, wrap: 1, clamp: 2 } as const;
 const SHAPE = { cross: 0, square: 1, circle: 2 } as const;
 const SEED_MODE: Record<SeedKind, number> = { random: 0, grayscale: 1, palette: 2, gradient: 3, image: 4 };
+const CELL_SHAPE = { square: 0, circle: 1, diamond: 2, hexagon: 3 } as const;
 const MIN_GRID = 4;
+const HEX_ROW = Math.sqrt(3) / 2;
 const BG: [number, number, number] = [0.043, 0.043, 0.047];
 
 const randomSeed = () => (Math.random() * 0xffffffff) >>> 0;
@@ -66,7 +68,8 @@ export class FlockEngine {
   private rows = 0;
   private width = 0;
   private height = 0;
-  private cellPx = 1;
+  private cellW = 1;
+  private cellH = 1;
   private offX = 0;
   private offY = 0;
 
@@ -134,7 +137,8 @@ export class FlockEngine {
       this.updatePalette();
       if (this.pairs.length) this.convertSpace(prev.colorSpace, next.colorSpace);
     }
-    if (next.cellSize !== undefined && next.cellSize !== prev.cellSize) this.resize();
+    const geometry = ['cellSize', 'grid', 'aspect'] as const;
+    if (geometry.some((k) => next[k] !== undefined && next[k] !== prev[k])) this.resize();
     this.requestDraw();
   }
 
@@ -319,19 +323,29 @@ export class FlockEngine {
     const coarse = window.matchMedia?.('(pointer: coarse)').matches;
     const maxCells = coarse ? 600_000 : 2_400_000;
     const maxTex = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number;
-    const gridFor = (px: number) => [Math.max(MIN_GRID, Math.ceil(w / px)), Math.max(MIN_GRID, Math.ceil(h / px))];
+    const hex = this.params.grid === 'hex';
+    const stretch = Math.sqrt(Math.min(5, Math.max(0.2, this.params.aspect)));
+    const gridFor = (px: number) => {
+      const cw = px * stretch;
+      const ch = (px / stretch) * (hex ? HEX_ROW : 1);
+      const cols = Math.max(MIN_GRID, Math.ceil(w / cw) + (hex ? 1 : 0));
+      let rows = Math.max(MIN_GRID, Math.ceil(h / ch));
+      if (hex && rows % 2) rows++; // even rows keep hex parity consistent when edges wrap
+      return { cols, rows, cw, ch };
+    };
 
     let cellPx = Math.max(1, this.params.cellSize * dpr);
-    let [cols, rows] = gridFor(cellPx);
-    while (cols * rows > maxCells || cols > maxTex || rows > maxTex) {
+    let g = gridFor(cellPx);
+    while (g.cols * g.rows > maxCells || g.cols > maxTex || g.rows > maxTex) {
       cellPx *= 1.05;
-      [cols, rows] = gridFor(cellPx);
+      g = gridFor(cellPx);
     }
 
-    this.cellPx = cellPx;
-    this.offX = (w - cols * cellPx) / 2;
-    this.offY = (h - rows * cellPx) / 2;
-    if (cols !== this.cols || rows !== this.rows) this.reallocate(cols, rows);
+    this.cellW = g.cw;
+    this.cellH = g.ch;
+    this.offX = (w - (g.cols + (hex ? 0.5 : 0)) * g.cw) / 2;
+    this.offY = (h - g.rows * g.ch) / 2;
+    if (g.cols !== this.cols || g.rows !== this.rows) this.reallocate(g.cols, g.rows);
     this.requestDraw();
   }
 
@@ -417,6 +431,10 @@ export class FlockEngine {
       p.int('uPaletteSize', colors.length);
       p.texture('uImage', 0, useImage ? this.imageTex! : this.dummyTex);
       p.vec2('uImageSize', this.imageSize[0], this.imageSize[1]);
+      p.vec2('uCell', this.cellW, this.cellH);
+      p.vec2('uOffset', this.offX, this.offY);
+      p.vec2('uCanvas', this.width, this.height);
+      p.int('uHex', this.params.grid === 'hex' ? 1 : 0);
     });
   }
 
@@ -465,8 +483,8 @@ export class FlockEngine {
   /** Encode the palette into the active color space for the palette-lock force. */
   private updatePalette() {
     const { kind, palette } = this.seedSpec;
-    const colors =
-      kind === 'palette' || kind === 'gradient' ? (palette?.length ? palette : PALETTES[0].colors).slice(0, 8) : [];
+    const fallback = kind === 'palette' || kind === 'gradient' ? PALETTES[0].colors : [];
+    const colors = (palette?.length ? palette : fallback).slice(0, 8);
     this.paletteEnc.fill(0);
     colors.forEach((hex, i) => this.paletteEnc.set(srgbToSpace(hexToRgb(hex), this.params.colorSpace), i * 3));
     this.paletteCount = colors.length;
@@ -503,6 +521,7 @@ export class FlockEngine {
       s.int('uRadius', Math.round(Math.min(3, Math.max(1, p.radius))));
       s.int('uShape', SHAPE[p.neighborhood]);
       s.int('uEdgeWrap', p.edgeWrap ? 1 : 0);
+      s.int('uHex', p.grid === 'hex' ? 1 : 0);
       s.float('uSep', p.separation);
       s.float('uAlign', p.alignment);
       s.float('uCoh', p.cohesion);
@@ -528,8 +547,10 @@ export class FlockEngine {
     this.pass(fbo, w, h, this.programs.render, (r) => {
       r.texture('uColor', 0, this.pairs[this.readIdx].color.tex);
       r.ivec2('uGrid', this.cols, this.rows);
-      r.float('uCellPx', this.cellPx * scale);
+      r.vec2('uCell', this.cellW * scale, this.cellH * scale);
       r.vec2('uOffset', this.offX * scale, this.offY * scale);
+      r.int('uHex', p.grid === 'hex' ? 1 : 0);
+      r.int('uShapeKind', CELL_SHAPE[p.cellShape]);
       r.float('uGap', p.gap);
       r.float('uRound', p.roundness);
       r.int('uSmooth', p.renderStyle === 'smooth' ? 1 : 0);

@@ -110,6 +110,12 @@ uvec3 pcg3d(uvec3 v) {
 vec3 rand3(ivec2 p, uint s) {
   return vec3(pcg3d(uvec3(uvec2(p), s))) / 4294967295.0;
 }
+
+// Center of grid cell p in canvas pixels. On hex grids, odd rows shift right by half a cell.
+vec2 cellCenterPx(ivec2 p, vec2 cell, vec2 offset, int hex) {
+  float shift = (hex == 1 && (p.y & 1) == 1) ? 0.5 : 0.0;
+  return offset + (vec2(p) + vec2(0.5 + shift, 0.5)) * cell;
+}
 `;
 
 export const VERT = /* glsl */ `#version 300 es
@@ -129,6 +135,7 @@ uniform ivec2 uGrid;
 uniform int uRadius;
 uniform int uShape;     // 0 cross, 1 square, 2 circle
 uniform int uEdgeWrap;
+uniform int uHex;
 uniform float uSep;
 uniform float uAlign;
 uniform float uCoh;
@@ -171,14 +178,23 @@ void main() {
   float wSum = 0.0;
   float tolHi = uTol * 1.35 + 0.001;
   int r = uRadius;
+  int q1 = p.x - (p.y - (p.y & 1)) / 2; // axial column, for hex distances
 
-  for (int dy = -3; dy <= 3; dy++) {
-    if (dy < -r || dy > r) continue;
-    for (int dx = -3; dx <= 3; dx++) {
-      if (dx < -r || dx > r) continue;
+  for (int dy = -r; dy <= r; dy++) {
+    for (int dx = -r; dx <= r; dx++) {
       if (dx == 0 && dy == 0) continue;
-      if (uShape == 0 && abs(dx) + abs(dy) > r) continue;
-      if (uShape == 2 && dx * dx + dy * dy > r * r + 1) continue;
+      float gridDist;
+      if (uHex == 1) {
+        int y2 = p.y + dy;
+        int dq = (p.x + dx - (y2 - (y2 & 1)) / 2) - q1;
+        int hexDist = (abs(dq) + abs(dy) + abs(dq + dy)) / 2;
+        if (hexDist > r) continue;
+        gridDist = float(hexDist);
+      } else {
+        if (uShape == 0 && abs(dx) + abs(dy) > r) continue;
+        if (uShape == 2 && dx * dx + dy * dy > r * r + 1) continue;
+        gridDist = length(vec2(dx, dy));
+      }
 
       ivec2 q = p + ivec2(dx, dy);
       if (uEdgeWrap == 1) {
@@ -195,7 +211,7 @@ void main() {
 
       // Tolerance: ignore neighbors whose color is too different.
       float w = uTol >= 0.999 ? 1.0 : 1.0 - smoothstep(uTol, tolHi, dist);
-      w /= length(vec2(dx, dy));
+      w /= gridDist;
 
       sumV += vj * w;
       sumD += d * w;
@@ -212,12 +228,12 @@ void main() {
     acc += limitLen(safeNorm(sumS) * uMaxSpeed - v, uMaxForce) * uSep;
   }
 
+  // Anchor: a spring back toward the cell's starting color. It pulls without braking, so an
+  // image shimmers and breathes around itself instead of freezing in place.
   if (uAnchorW > 0.0) {
     vec3 d = texelFetch(uAnchor, p, 0).rgb - c;
     d -= floor(d + 0.5) * wrapMask;
-    float dist = length(d);
-    vec3 desired = safeNorm(d) * uMaxSpeed * min(1.0, dist / 0.06);
-    acc += limitLen(desired - v, uMaxForce) * uAnchorW;
+    acc += limitLen(d * (uMaxForce / 0.05), uMaxForce) * uAnchorW;
   }
 
   // Palette lock: the palette's gradient (a polyline in color space) acts like a rail.
@@ -276,6 +292,10 @@ uniform vec3 uPalette[8];
 uniform int uPaletteSize;
 uniform sampler2D uImage;
 uniform vec2 uImageSize;
+uniform vec2 uCell;
+uniform vec2 uOffset;
+uniform vec2 uCanvas;
+uniform int uHex;
 out vec4 oColor;
 
 float vnoise(vec2 x, uint s) {
@@ -311,7 +331,7 @@ vec3 paletteRamp(float t) {
 
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
-  vec2 uv = (vec2(p) + 0.5) / vec2(uGrid);
+  vec2 uv = cellCenterPx(p, uCell, uOffset, uHex) / uCanvas;
   vec3 r = rand3(p, uSeed);
   vec3 col;
 
@@ -324,7 +344,7 @@ void main() {
     int i = min(int(r.x * float(n)), n - 1);
     col = uPalette[i] + (r.yzx - 0.5) * 0.06;
   } else if (uMode == 3) {
-    float aspect = float(uGrid.x) / float(uGrid.y);
+    float aspect = uCanvas.x / uCanvas.y;
     vec2 q = vec2(uv.x * aspect, uv.y) * 2.2 + 100.0;
     vec3 o = rand3(ivec2(7, 13), uSeed) * 50.0;
     vec2 warp = vec2(fbm(q + o.xy, uSeed), fbm(q + o.yz + 5.2, uSeed + 3u));
@@ -332,7 +352,7 @@ void main() {
     col = paletteRamp(smoothstep(0.22, 0.78, t));
   } else {
     // Cover-fit the image to the grid, averaging the pixels under each cell via mipmaps.
-    float gridAspect = float(uGrid.x) / float(uGrid.y);
+    float gridAspect = uCanvas.x / uCanvas.y;
     float imgAspect = uImageSize.x / uImageSize.y;
     vec2 iuv = uv;
     vec2 visible = uImageSize;
@@ -345,7 +365,7 @@ void main() {
       iuv.x = (uv.x - 0.5) * k + 0.5;
       visible.x *= k;
     }
-    float lod = log2(max(visible.x / float(uGrid.x), 1.0));
+    float lod = log2(max(visible.x * uCell.x / uCanvas.x, 1.0));
     col = textureLod(uImage, iuv, lod).rgb;
   }
 
@@ -401,13 +421,15 @@ void main() {
 }
 `;
 
-/** Draws the grid to the screen: crisp squares (with optional gap/rounding) or smooth blending. */
+/** Draws the grid: square or hex cells with optional shapes, gaps and rounding, or smooth blending. */
 export const RENDER_FRAG = /* glsl */ `#version 300 es
 ${COMMON}
 uniform sampler2D uColor;
 uniform ivec2 uGrid;
-uniform float uCellPx;
+uniform vec2 uCell;      // cell width, row height (device px)
 uniform vec2 uOffset;
+uniform int uHex;
+uniform int uShapeKind;  // 0 square, 1 circle, 2 diamond, 3 hexagon
 uniform float uGap;
 uniform float uRound;
 uniform int uSmooth;
@@ -415,34 +437,84 @@ uniform int uSpace;
 uniform vec3 uBg;
 out vec4 oColor;
 
+const float HEX_ROW = 0.8660254;
+
 vec3 cellColor(ivec2 c) {
   return decodeSpace(texelFetch(uColor, clamp(c, ivec2(0), uGrid - 1), 0).rgb, uSpace);
 }
 
+// Signed distance (px) to a cell shape centered at the origin with half-width e.
+float shapeSdf(vec2 p, float e, int kind) {
+  if (kind == 1) return length(p) - e;
+  if (kind == 2) return (abs(p.x) + abs(p.y) - e) * 0.70710678;
+  if (kind == 3) {
+    vec2 a = abs(p);
+    return max(a.x, a.x * 0.5 + a.y * HEX_ROW) - e;
+  }
+  vec2 d = abs(p) - vec2(e);
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
 void main() {
-  vec2 f = (gl_FragCoord.xy - uOffset) / uCellPx;
+  vec2 f = gl_FragCoord.xy - uOffset;
+  ivec2 cell = ivec2(0);
+  vec2 local = vec2(0.0); // px from the cell's center
   vec3 col;
 
-  if (uSmooth == 1) {
-    vec2 g = f - 0.5;
-    ivec2 i = ivec2(floor(g));
-    vec2 t = fract(g);
-    t = t * t * (3.0 - 2.0 * t);
-    col = mix(
-      mix(cellColor(i), cellColor(i + ivec2(1, 0)), t.x),
-      mix(cellColor(i + ivec2(0, 1)), cellColor(i + ivec2(1, 1)), t.x),
-      t.y
-    );
-  } else {
-    col = cellColor(ivec2(floor(f)));
-    if (uGap > 0.0 || uRound > 0.0) {
-      vec2 local = (fract(f) - 0.5) * uCellPx;
-      float hs = 0.5 * uCellPx * (1.0 - uGap);
-      float rad = uRound * hs;
-      vec2 q = abs(local) - vec2(hs - rad);
-      float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rad;
-      col = mix(uBg, col, clamp(0.5 - d, 0.0, 1.0));
+  if (uHex == 1) {
+    // The nearest cell center wins, which carves the plane into hexagons.
+    float row = floor(f.y / uCell.y);
+    float best = 1e20;
+    vec3 blend = vec3(0.0);
+    float wSum = 0.0;
+    for (int j = -1; j <= 1; j++) {
+      float ry = row + float(j);
+      float shift = mod(ry, 2.0) >= 1.0 ? 0.5 : 0.0;
+      float gx = f.x / uCell.x - shift;
+      float cx0 = floor(gx);
+      float cx1 = cx0 + (fract(gx) < 0.5 ? -1.0 : 1.0);
+      for (int i = 0; i < 2; i++) {
+        float cx = i == 0 ? cx0 : cx1;
+        vec2 dv = f - (vec2(cx, ry) + vec2(0.5 + shift, 0.5)) * uCell;
+        vec2 dn = vec2(dv.x, dv.y * uCell.x * HEX_ROW / uCell.y);
+        float d2 = dot(dn, dn);
+        ivec2 c = ivec2(int(cx), int(ry));
+        if (d2 < best) { best = d2; cell = c; local = dv; }
+        if (uSmooth == 1) {
+          float w = exp(-d2 / (0.12 * uCell.x * uCell.x));
+          blend += cellColor(c) * w;
+          wSum += w;
+        }
+      }
     }
+    col = uSmooth == 1 ? blend / max(wSum, 1e-6) : cellColor(cell);
+  } else {
+    vec2 g = f / uCell;
+    cell = ivec2(floor(g));
+    local = (fract(g) - 0.5) * uCell;
+    if (uSmooth == 1) {
+      vec2 h = g - 0.5;
+      ivec2 i = ivec2(floor(h));
+      vec2 t = fract(h);
+      t = t * t * (3.0 - 2.0 * t);
+      col = mix(
+        mix(cellColor(i), cellColor(i + ivec2(1, 0)), t.x),
+        mix(cellColor(i + ivec2(0, 1)), cellColor(i + ivec2(1, 1)), t.x),
+        t.y
+      );
+    } else {
+      col = cellColor(cell);
+    }
+  }
+
+  int defaultShape = uHex == 1 ? 3 : 0;
+  if (uSmooth == 0 && (uGap > 0.0 || uRound > 0.0 || uShapeKind != defaultShape)) {
+    vec2 natural = uHex == 1 ? vec2(uCell.x, uCell.x * HEX_ROW) : vec2(min(uCell.x, uCell.y));
+    vec2 p = local * natural / uCell;
+    float e = 0.5 * natural.x * (1.0 - uGap);
+    float rad = uRound * e * 0.9;
+    float d = shapeSdf(p, e - rad, uShapeKind) - rad;
+    col = mix(uBg, col, clamp(0.5 - d, 0.0, 1.0));
   }
 
   oColor = vec4(col, 1.0);

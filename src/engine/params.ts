@@ -2,6 +2,8 @@ export type ColorSpace = 'rgb' | 'oklab' | 'hsv';
 export type WallMode = 'bounce' | 'wrap' | 'clamp';
 export type Neighborhood = 'cross' | 'square' | 'circle';
 export type RenderStyle = 'crisp' | 'smooth';
+export type GridType = 'square' | 'hex';
+export type CellShape = 'square' | 'circle' | 'diamond' | 'hexagon';
 
 export interface FlockParams {
   // Forces
@@ -35,6 +37,11 @@ export interface FlockParams {
   // Grid
   /** Cell size in CSS pixels. */
   cellSize: number;
+  /** Square grid (8 neighbors) or hex grid (6 neighbors, offset rows). */
+  grid: GridType;
+  cellShape: CellShape;
+  /** Cell width ÷ height. Above 1 = wide cells, below 1 = tall cells. */
+  aspect: number;
   /** Gap between cells as a fraction of the cell. */
   gap: number;
   roundness: number;
@@ -59,6 +66,9 @@ export const DEFAULT_PARAMS: FlockParams = {
   colorSpace: 'rgb',
   walls: 'bounce',
   cellSize: 8,
+  grid: 'square',
+  cellShape: 'square',
+  aspect: 1,
   gap: 0,
   roundness: 0,
   renderStyle: 'crisp',

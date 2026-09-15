@@ -10,6 +10,9 @@ const round = (v: number, step: number) => Math.round(v / step) * step;
 /** A random but tasteful combination of settings. */
 export function surprise(): { params: FlockParams; seed: SeedSelection } {
   const cellSize = pick([2, 3, 4, 5, 6, 8, 12, 16, 24, 32]);
+  const grid = Math.random() < 0.3 ? 'hex' : 'square';
+  const cellShape =
+    grid === 'hex' ? pick(['hexagon', 'hexagon', 'circle'] as const) : pick(['square', 'square', 'square', 'circle', 'diamond'] as const);
   const kinds: SeedKind[] = ['random', 'palette', 'gradient', 'gradient'];
   if (IMAGES.length) kinds.push('image', 'image');
   const kind = pick(kinds);
@@ -32,8 +35,14 @@ export function surprise(): { params: FlockParams; seed: SeedSelection } {
     colorSpace: pick(['rgb', 'oklab', 'oklab', 'hsv'] as const),
     walls: pick(['bounce', 'bounce', 'wrap', 'clamp'] as const),
     cellSize,
+    grid,
+    cellShape,
+    aspect: grid === 'square' && Math.random() < 0.15 ? pick([0.25, 0.4, 2.5, 4]) : 1,
     renderStyle: cellSize <= 4 && Math.random() < 0.4 ? 'smooth' : 'crisp',
-    gap: cellSize >= 12 && Math.random() < 0.5 ? round(rand(0.05, 0.25), 0.01) : 0,
+    gap:
+      cellSize >= 10 && (cellShape === 'circle' || cellShape === 'diamond' || Math.random() < 0.5)
+        ? round(rand(0.05, 0.25), 0.01)
+        : 0,
     roundness: cellSize >= 12 && Math.random() < 0.4 ? round(rand(0.1, 1), 0.05) : 0,
   };
 

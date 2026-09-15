@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlockEngine, type EngineStats, type SeedSpec } from '../engine/FlockEngine';
 import { DEFAULT_PARAMS, PALETTES, type FlockParams } from '../engine/params';
-import { ControlPanel } from './ControlPanel';
+import { ControlPanel, PhotoCredit } from './ControlPanel';
 import { FlockCanvas } from './FlockCanvas';
 import { downloadBlob, loadImage, useIdle } from './hooks';
 import { DownloadIcon, ExpandIcon, PauseIcon, PlayIcon, RestartIcon, ShuffleIcon, SlidersIcon, StepIcon } from './icons';
 import { IMAGES } from './images';
+import { extractPalette } from './palette';
 import { IMAGE_PRESETS, PRESETS, type Preset, type SeedSelection } from './presets';
 import { surprise } from './surprise';
 
 const HERO = PRESETS[0];
 
 function syncSeedSpec(sel: SeedSelection): SeedSpec {
+  const kind = sel.kind === 'image' ? 'gradient' : sel.kind;
+  const usesPalette = kind === 'palette' || kind === 'gradient';
   const palette = (PALETTES.find((p) => p.id === sel.paletteId) ?? PALETTES[0]).colors;
-  return { kind: sel.kind === 'image' ? 'gradient' : sel.kind, palette };
+  return { kind, palette: usesPalette ? palette : undefined };
 }
+
+// A photo's own colors, so palette lock can hold a dissolving image inside its color world.
+const photoPalettes = new Map<string, string[]>();
 
 export function App() {
   const engineRef = useRef<FlockEngine | null>(null);
@@ -32,7 +38,10 @@ export function App() {
   const uiVisible = !idle || hovering || panelOpen;
 
   const presets = useMemo(
-    () => [...PRESETS, ...(IMAGES.length ? IMAGE_PRESETS.map((p) => ({ ...p, seed: { ...p.seed, imageId: IMAGES[0].id } })) : [])],
+    () =>
+      IMAGES.length
+        ? [...PRESETS, ...IMAGE_PRESETS.map((p) => ({ ...p, seed: { ...p.seed, imageId: p.seed.imageId ?? IMAGES[0].id } }))]
+        : PRESETS,
     [],
   );
 
@@ -58,7 +67,12 @@ export function App() {
       try {
         const img = await loadImage(image.src);
         if (token !== seedToken.current) return; // a newer choice won
-        engine.setSeed({ kind: 'image', image: img }, { transition });
+        let palette = photoPalettes.get(image.id);
+        if (!palette) {
+          palette = extractPalette(img);
+          photoPalettes.set(image.id, palette);
+        }
+        engine.setSeed({ kind: 'image', image: img, palette }, { transition });
       } catch {
         setToast('Could not load that photo');
       }
@@ -184,6 +198,7 @@ export function App() {
           <div className="wordmark ui-fade">
             <h1>Color Flocking</h1>
             <p>{activePreset ? activePreset.name : 'Custom'}</p>
+            {seed.kind === 'image' && <PhotoCredit imageId={seed.imageId} />}
           </div>
 
           <nav

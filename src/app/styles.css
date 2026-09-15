@@ -95,6 +95,24 @@ button {
   color: rgba(255, 255, 255, 0.7);
 }
 
+.photo-credit {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.photo-credit a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  pointer-events: auto;
+}
+
+.photo-credit a:hover {
+  color: var(--text);
+}
+
 /* ------------------------------------------------------------ toolbar */
 
 .toolbar {
